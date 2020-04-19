@@ -1,0 +1,402 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "resources": [
+        {
+            "apiVersion": "2018-11-01",
+            "type": "Microsoft.Web/sites",
+            "name": "[variables('functionAppName')]",
+            "location": "[parameters('location')]",
+            "kind": "functionapp,linux,container",
+            "identity": {
+                "type": "SystemAssigned"
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName'))]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+                "[resourceId('Microsoft.AppConfiguration/configurationStores', parameters('configStoreName'))]",
+                "[resourceId('microsoft.insights/components', variables('applicationInsightsName'))]"
+
+            ],
+            "properties": {
+                "name": "[variables('functionAppName')]",
+                "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName'))]",
+                "siteConfig": {
+                    "alwaysOn": true,
+                    "appSettings": [
+                        {
+                            "name": "AzureWebJobsStorage",
+                            "value": "[concat('DefaultEndpointsProtocol=https;AccountName=', variables('storageAccountName'), ';AccountKey=', listKeys(variables('storageAccountid'),'2019-06-01').keys[0].value,';EndpointSuffix=','core.windows.net')]"
+                        },
+                        {
+                            "name": "FUNCTIONS_EXTENSION_VERSION",
+                            "value": "~3"
+                        },
+                        {
+                            "name": "DOCKER_REGISTRY_SERVER_URL",
+                            "value": "[reference(resourceId('Microsoft.ContainerRegistry/registries/', parameters('acrName')), '2019-05-01').loginServer]"
+                        },
+                        {
+                            "name": "DOCKER_REGISTRY_SERVER_USERNAME",
+                            "value": "[parameters('acrName')]"
+                        },
+                        {
+                            "name": "DOCKER_REGISTRY_SERVER_PASSWORD",
+                            "value": "[listCredentials(resourceId('Microsoft.ContainerRegistry/registries/', parameters('acrName')), '2019-05-01').passwords[0].value]"
+                        },
+                        {
+                            "name": "WEBSITES_ENABLE_APP_SERVICE_STORAGE",
+                            "value": "false"
+                        },
+                        {
+                            "name": "APPINSIGHTS_INSTRUMENTATIONKEY",
+                            "value": "[reference(resourceId('microsoft.insights/components/', variables('applicationInsightsName')), '2018-05-01-preview').InstrumentationKey]"
+                        },
+                        {
+                            "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
+                            "value": "[reference(resourceId('microsoft.insights/components/', variables('applicationInsightsName')), '2018-05-01-preview').ConnectionString]"
+                        },
+                        {
+                            "name": "AppConfigEndpoint",
+                            "value": "[reference(resourceId('Microsoft.AppConfiguration/configurationStores', parameters('configStoreName')), '2019-10-01').Endpoint]"
+                        }
+                    ],
+                    "minTlsVersion": "1.2",
+                    "linuxFxVersion": "[parameters('linuxFxVersion')]",
+                    "appCommandLine": "[parameters('dockerRegistryStartupCommand')]"
+                },
+                "hostingEnvironment": "[parameters('hostingEnvironment')]",
+                "httpsOnly": true,
+                "clientAffinityEnabled": false
+            }
+        },
+        {
+            "name": "[concat(variables('functionAppName'), '/authsettings')]",
+            "apiVersion": "2018-11-01",
+            "type": "Microsoft.Web/sites/config",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]"
+            ],
+            "properties": {
+                "enabled": true,
+                "unauthenticatedClientAction": "RedirectToLoginPage",
+                "issuer": "[concat('https://sts.windows.net/', parameters('tenantId'), '/')]",
+                "defaultProvider": "AzureActiveDirectory",
+                "clientId": "[parameters('functionAppClientId')]"
+            }
+        },
+        {
+            "type": "Microsoft.Web/serverfarms",
+            "kind": "linux",
+            "apiVersion": "2018-11-01",
+            "name": "[variables('hostingPlanName')]",
+            "location": "[parameters('location')]",
+            "sku": {
+                "Tier": "[parameters('functionAppSku')]",
+                "Name": "[parameters('functionAppSkuCode')]"
+            },
+            "properties": {
+                "name": "[variables('hostingPlanName')]",
+                "workerSize": "[parameters('workerSize')]",
+                "workerSizeId": "[parameters('workerSizeId')]",
+                "numberOfWorkers": "[parameters('numberOfWorkers')]",
+                "reserved": true,
+                "hostingEnvironment": "[parameters('hostingEnvironment')]"
+            }
+        },
+        {
+            "type": "Microsoft.Storage/storageAccounts",
+            "name": "[variables('storageAccountName')]",
+            "apiVersion": "2019-06-01",
+            "location": "[parameters('location')]",
+            "kind": "Storage",
+            "sku": {
+                "name": "[parameters('storageAccountType')]"
+            }
+        },
+        {
+            "apiVersion": "2018-05-01-preview",
+            "name": "[variables('applicationInsightsName')]",
+            "type": "microsoft.insights/components",
+            "location": "[parameters('location')]",
+            "tags": {
+                "[concat('hidden-link:', resourceGroup().id, '/providers/Microsoft.Web/sites/', variables('applicationInsightsName'))]": "Resource"
+            },
+            "properties": {
+                "ApplicationId": "[variables('applicationInsightsName')]"
+            }
+        },
+        {
+            "type": "Microsoft.KeyVault/vaults",
+            "name": "[parameters('keyVaultName')]",
+            "apiVersion": "2018-02-14",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]"
+            ],
+            "properties": {
+                "enabledForDeployment": "[parameters('enableVaultForDeployment')]",
+                "tenantId": "[parameters('tenantId')]",
+                "accessPolicies": [
+                    {
+                        "tenantId": "[reference(concat('Microsoft.Web/sites/', parameters('functionAppName')), '2018-11-01', 'Full').identity.tenantId]",
+                        "objectId": "[reference(concat('Microsoft.Web/sites/', parameters('functionAppName')), '2018-11-01', 'Full').identity.principalId]",
+                        "permissions": {
+                            "keys": [
+                            ],
+                            "secrets": [
+                                "get"
+                            ],
+                            "certificates": [
+                                "get"
+                            ],
+                            "storage": [
+                            ]
+                        }
+                    }
+                ],
+                "sku": {
+                    "name": "[parameters('skuName')]",
+                    "family": "A"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.AppConfiguration/configurationStores",
+            "name": "[parameters('configStoreName')]",
+            "apiVersion": "2019-10-01",
+            "location": "[parameters('location')]",
+            "sku": {
+                "name": "[parameters('configSkuName')]"
+            },
+            "properties": {
+            }
+        },
+        {
+            "type": "Microsoft.AppConfiguration/configurationStores/providers/roleAssignments",
+            "apiVersion": "2018-09-01-preview",
+            "name": "[concat(parameters('configStoreName'), '/Microsoft.Authorization/', guid(uniqueString(variables('functionAppResourceRoleAssignment'))))]",
+            "dependsOn": [
+                "[parameters('configStoreName')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[variables(parameters('builtInRoleType'))]",
+                "principalId": "[reference(concat('Microsoft.Web/sites/', parameters('functionAppName')), '2018-11-01', 'Full').identity.principalId]"
+            }
+        },
+        {
+            "type": "Microsoft.AppConfiguration/configurationStores/providers/roleAssignments",
+            "apiVersion": "2018-09-01-preview",
+            "name": "[concat(parameters('configStoreName'), '/Microsoft.Authorization/', guid(uniqueString(variables('servicePrincipalRoleAssignment'))))]",
+            "dependsOn": [
+                "[parameters('configStoreName')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[variables('App Configuration Data Reader')]",
+                "principalId": "[parameters('servicePrincipalObjectId')]"
+            }
+        },
+        {
+            "name": "[parameters('acrName')]",
+            "type": "Microsoft.ContainerRegistry/registries",
+            "apiVersion": "2019-05-01",
+            "location": "[parameters('location')]",
+            "comments": "Container registry for storing docker images",
+            "tags": {
+                "displayName": "Container Registry",
+                "container.registry": "[parameters('acrName')]"
+            },
+            "sku": {
+                "name": "[parameters('acrSku')]",
+                "tier": "[parameters('acrSku')]"
+            },
+            "properties": {
+                "adminUserEnabled": "[parameters('acrAdminUserEnabled')]"
+            }
+        }
+    ],
+    "parameters": {
+        "functionAppName": {
+            "type": "string",
+            "metadata": {
+                "description": "The name of the function app that you wish to create."
+            }
+        },
+        "location": {
+            "type": "string",
+            "defaultValue": "[resourceGroup().location]",
+            "metadata": {
+                "description": "Location for all resources."
+            }
+        },
+        "functionAppClientId": {
+            "type": "string",
+            "metadata": {
+                "description": "The client ID of the function app."
+            }
+        },
+        "keyVaultName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the Vault"
+            }
+        },
+        "tenantId": {
+            "type": "string",
+            "defaultValue": "72f988bf-86f1-41af-91ab-2d7cd011db47",
+            "metadata": {
+                "description": "Tenant Id of the subscription. Get using Get-AzureSubscription cmdlet or Get Subscription API"
+            }
+        },
+        "enableVaultForDeployment": {
+            "type": "bool",
+            "defaultValue": true,
+            "allowedValues": [
+                true,
+                false
+            ],
+            "metadata": {
+                "description": "Specifies if the vault is enabled for a VM deployment"
+            }
+        },
+        "skuName": {
+            "type": "string",
+            "defaultValue": "Standard",
+            "allowedValues": [
+                "Standard",
+                "Premium"
+            ],
+            "metadata": {
+                "description": "SKU for the vault"
+            }
+        },
+        "storageAccountName": {
+            "type": "string",
+            "metadata": {
+                "description": "Storage Account name"
+            }
+        },
+        "storageAccountType": {
+            "type": "string",
+            "defaultValue": "Standard_LRS",
+            "allowedValues": [
+                "Standard_LRS",
+                "Standard_GRS",
+                "Standard_RAGRS"
+            ],
+            "metadata": {
+                "description": "Storage Account type"
+            }
+        },
+        "runtime": {
+            "type": "string",
+            "defaultValue": "dotnet",
+            "allowedValues": [
+                "node",
+                "dotnet",
+                "java"
+            ],
+            "metadata": {
+                "description": "The language worker runtime to load in the function app."
+            }
+        },
+        "applicationInsightsName": {
+            "type": "string",
+            "metadata": {
+                "description": "The name of the Application insights resource."
+            }
+        },
+        "configStoreName": {
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the name of the app configuration store."
+            }
+        },
+        "configSkuName": {
+            "type": "string",
+            "defaultValue": "standard",
+            "metadata": {
+                "description": "Specifies the SKU of the app configuration store."
+            }
+        },
+        "builtInRoleType": {
+            "type": "string",
+            "defaultValue": "App Configuration Data Reader",
+            "allowedValues": [
+                "App Configuration Data Reader",
+                "App Configuration Data Owner"
+            ],
+            "metadata": {
+                "description": "Built-in role to assign for the identity trying to access app configuration store."
+            }
+        },
+        "servicePrincipalObjectId": {
+            "type": "string",
+            "metadata": {
+                "description": "The client ID of the Service Principal."
+            }
+        },
+        "acrName": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 50,
+            "metadata": {
+                "description": "Name of your Azure Container Registry"
+            }
+        },
+        "acrAdminUserEnabled": {
+            "type": "bool",
+            "defaultValue": true,
+            "metadata": {
+                "description": "Enable admin user that have push / pull permission to the registry."
+            }
+        },
+        "acrSku": {
+            "type": "string",
+            "metadata": {
+                "description": "Tier of your Azure Container Registry."
+            },
+            "defaultValue": "Basic",
+            "allowedValues": [
+                "Basic",
+                "Standard",
+                "Premium"
+            ]
+        },
+        "linuxFxVersion": {
+            "type": "string"
+        },
+        "dockerRegistryStartupCommand": {
+            "type": "string"
+        },
+        "hostingEnvironment": {
+            "type": "string"
+        },
+        "functionAppSku": {
+            "type": "string"
+        },
+        "functionAppSkuCode": {
+            "type": "string"
+        },
+        "workerSize": {
+            "type": "string"
+        },
+        "workerSizeId": {
+            "type": "string"
+        },
+        "numberOfWorkers": {
+            "type": "string"
+        }
+    },
+    "variables": {
+        "functionAppName": "[parameters('functionAppName')]",
+        "hostingPlanName": "[parameters('functionAppName')]",
+        "storageAccountName": "[parameters('storageAccountName')]",
+        "storageAccountid": "[concat(resourceGroup().id,'/providers/','Microsoft.Storage/storageAccounts/', variables('storageAccountName'))]",
+        "applicationInsightsName": "[parameters('applicationInsightsName')]",
+        "App Configuration Data Reader": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', '516239f1-63e1-4d78-a4de-a74fb236a071')]",
+        "functionAppResourceRoleAssignment": "[concat('functionApp', parameters('configStoreName'))]",
+        "servicePrincipalRoleAssignment": "[concat('servicePrincipal', parameters('configStoreName'))]"
+    }
+}
